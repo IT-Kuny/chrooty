@@ -5,12 +5,12 @@ set -e
 # Check if the script is being run as root
 if [[ "$EUID" -ne 0 ]]; then
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-  echo "This script must be run as root. Exiting."
+  echo -e "              This script must be run as root. Exiting.                "
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
   exit 1
 else
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-  echo "Running as root. Proceeding with the script."
+  echo -e "            Running as root. Proceeding with the script.               "
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
   sleep 2
 fi
@@ -19,23 +19,21 @@ rsfolder="/rescue"
 
 if [[ ! -d "$rsfolder" ]]; then
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-  echo -e "chroot Folder is required! Creating chroot Folder."
+  echo -e "          chroot Folder is required! Creating chroot Folder.           "
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
   mkdir -p /rescue
 else
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-  echo -e "Awesome! The chroot folder exists. Continuing with the script."
+  echo -e "     Awesome! The chroot folder exists. Continuing with the script.    "
   echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
   sleep 2
 fi
-
-
 
 # Function to display available partitions and let the user select
 select_partition() {
     while true; do
         echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-        echo -e "Displaying available partitions..."
+        echo -e "Displaying available partitions:"
 
         # List all available disks and partitions
         lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
@@ -43,8 +41,8 @@ select_partition() {
 
         # Prompt user to select partitions
         echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-        echo -e "Please select the UEFI partition and the system partition."
-        echo -e "If there is no UEFI partition, select only the system partition."
+        echo -e "      Please select the UEFI partition and the system partition.       "
+        echo -e "   If there is no UEFI partition, select only the system partition.    "
         echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
         read -p "Enter the UEFI partition (or press Enter if none): " uefi_partition
         read -p "Enter the system partition: " system_partition
@@ -77,12 +75,22 @@ select_partition() {
     echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
 }
 
-    echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+# Function to bind mount necessary filesystems for chroot
+mount_filesystems() {
+    echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+    echo -e "            Bind mounting critical directories for chroot...           "
+    mount --bind /dev $rsfolder/dev
+    mount --bind /sys $rsfolder/sys
+    mount --bind /proc $rsfolder/proc
+    mount --bind /run $rsfolder/run
+    mount --bind /etc/resolv.conf $rsfolder/etc/resolv.conf
+    echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+}
 
 # Function to unmount previous bind mounts
 umount_filesystems() {
     echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-    echo -e "Unmounting previous bind mounts..."
+    echo -e "                  Unmounting previous bind mounts...                   "
     umount $rsfolder/dev/pts || true
     umount $rsfolder/dev || true
     umount $rsfolder/sys || true
@@ -93,15 +101,33 @@ umount_filesystems() {
 }
 
 # Main script execution
-echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-echo -e "   Setting up rescue environment...  "
-echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+echo -e "                     Setting up rescue environment...                  "
+echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
 
 # Step 1: Partition selection
 select_partition
 
 # Step 2: Mount bind filesystems after partition selection
 mount_filesystems
+
+# Step 3: Enter the chroot environment
 echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
-echo -e "          Chroot environment has been set up successfully.             "
+echo -e "   Entering the chroot environment. You can now perform rescue tasks.  "
+echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+
+# Execute the chroot command
+chroot $rsfolder /bin/bash
+
+# After exiting the chroot environment
+echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+echo -e "You have exited the chroot environment. Continuing with the script..."
+echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+
+# Step 4: Cleanup - Unmount bind filesystems
+umount_filesystems
+
+# Final success message
+echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
+echo -e "        Chroot environment has been cleaned up successfully.           "
 echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
