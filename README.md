@@ -117,4 +117,4 @@ This error may occur if the partition is not valid or the mount point is already
 
 ## License
 
-This script is open-source and free to use and under GPL3 licensed. Contributions and improvements are welcome!
+This script is open-source and free to use and under AGPL 3 licensed. Contributions and improvements are welcome!
