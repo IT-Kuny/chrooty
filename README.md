@@ -11,7 +11,7 @@ It is intended for recovery operations where you need to repair or troubleshoot 
 - The script allows users to easily mount system and UEFI partitions and bind the necessary directories for recovery tasks.
 - The user interaction makes it easy to choose partitions while also providing feedback messages for smooth execution.
 
-## Features
+### Features
 
 - Root Check: Ensures the script is run as root before proceeding.
 - Chroot Folder Setup: Verifies if the /rescue folder exists. If it doesn't, the script will create it.
@@ -20,7 +20,7 @@ It is intended for recovery operations where you need to repair or troubleshoot 
 - Bind Mounts: Binds critical system directories (/dev, /sys, /proc, /run, and /etc/resolv.conf) into the chroot environment for full system access.
 - Unmount Cleanup: Safely unmounts all previous bind mounts from the chroot environment when done.
 
-## Requirements
+### Requirements
 
 The script must be executed with root privileges.
 Available partitions for mounting (system and optionally UEFI) must exist.
@@ -46,7 +46,7 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 ```
 
-## Chroot Folder Check: The script checks if the /rescue folder exists:
+### Chroot Folder Check: The script checks if the /rescue folder exists:
 
 If the folder doesn't exist, it will create it (mkdir -p /rescue).
 If the folder exists, it will confirm this and proceed.
@@ -57,7 +57,7 @@ if [[ ! -d "$rsfolder" ]]; then
 fi
 ```
 
-## Partition Selection: The script will display all available disks and partitions using lsblk and ask the user to select:
+### Partition Selection: The script will display all available disks and partitions using lsblk and ask the user to select:
 
 System Partition: This partition is required.
 UEFI Partition: If a UEFI partition exists, it can be selected. If not, you can skip it.
