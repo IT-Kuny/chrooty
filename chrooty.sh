@@ -117,7 +117,7 @@ echo -e "   Entering the chroot environment. You can now perform rescue tasks.  
 echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
 
 # Execute the chroot command
-chroot $rsfolder /bin/bash
+chroot $rsfolder /bin/bash || chroot $rsfolder /bin/sh
 
 # After exiting the chroot environment
 echo -e "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"
