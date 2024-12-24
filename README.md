@@ -68,7 +68,7 @@ UEFI Partition: If a UEFI partition exists, it can be selected. If not, you can 
 lsblk -o NAME,SIZE,TYPE,MOUNTPOINT
 ```
 
-Mount Partitions:
+#### Mount Partitions:
 
 If a UEFI partition is selected, it will be mounted to /rescue/boot/efi.
 The system partition is mounted to /rescue.
@@ -90,7 +90,7 @@ mount --bind /run $rsfolder/run
 mount --bind /etc/resolv.conf $rsfolder/etc/resolv.conf
 ```
 
-Unmount Cleanup: Once the operations are completed, the script unmounts all the bind-mounted directories:
+#### Unmount Cleanup: Once the operations are completed, the script unmounts all the bind-mounted directories:
 
 ```bash
 umount $rsfolder/dev/pts || true
@@ -101,10 +101,10 @@ umount $rsfolder/run || true
 umount $rsfolder/etc/resolv.conf || true
 ```
 
-Completion: After successfully setting up the chroot environment, the script prints a success message and exits.
+#### Completion: After successfully setting up the chroot environment - entered chroot and left, the script prints a success message and exits.
 
 ```bash
-echo "Chroot environment has been set up successfully."
+echo "Chroot environment has been cleaned up successfully."
 ```
 
 ## Troubleshooting
