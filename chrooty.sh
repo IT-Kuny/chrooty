@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 
 set -e
+# Register the cleanup function to be called on EXIT
+trap umount_filesystems EXIT
 
 # Check if the script is being run as root
 if [[ "$EUID" -ne 0 ]]; then
@@ -96,6 +98,8 @@ umount_filesystems() {
     umount $rsfolder/proc || true
     umount $rsfolder/run || true
     umount $rsfolder/etc/resolv.conf || true
+    umount -l $uefi_partition || true
+    umount -l $system_partition || true
 }
 
 # Main script execution
