@@ -293,9 +293,20 @@ mount_chroot() {
   local root_fstype
   root_fstype=$(blkid -s TYPE -o value "${ROOT_PART}")
 
-  if [[ -n "${BTRFS_SUBVOL}" ]]; then
-    # Explicitly specify btrfs and subvolume
-    mount -t btrfs -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
+  if [[ -n "$BTRFS_SUBVOL" ]]; then
+    # If BTRFS_SUBVOL is numeric, use subvolid; otherwise mount by name
+    if [[ "$BTRFS_SUBVOL" =~ ^[0-9]+$ ]]; then
+      mount -t btrfs -o subvolid="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
+    else
+      mount -t btrfs -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
+    fi
+  else
+    # Non-Btrfs path unchanged
+    if [[ -n "$root_fstype" ]]; then
+      mount -t "$root_fstype" "${ROOT_PART}" "${CHROOT_DIR}"
+    else
+      mount "${ROOT_PART}" "${CHROOT_DIR}"
+    fi
   else
     # For other filesystems, include -t for reliability
     if [[ -n "${root_fstype}" ]]; then
