@@ -21,7 +21,7 @@ jobs:
       - name: Check shell formatting with shfmt
         run: shfmt -l -w .
       - name: Run ShellCheck
-        run: shellcheck -x ./*.sh
+        run: shellcheck -x *.sh
 
   test:
     name: Run Bats Tests
@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y jq lvm2 btrfs-progs zfsutils-linux dosfstools parted util-linux bats-core
+          sudo apt-get install -y jq lvm2 btrfs-progs zfsutils-linux dosfstools parted util-linux bats
       - name: Run Bats tests
         run: bats tests/*.sh
 
