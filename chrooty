@@ -247,23 +247,36 @@ detect_partitions() {
         | "/dev/"+.name
       ' <<<"$lsblk_json" | head -n1
     )
+
     if [[ -n "$bdev" ]]; then
       verbose_log "Btrfs detected on $bdev—inspecting subvolumes"
       TMP_MNT=$(mktemp -d /dev/shm/chrooty.XXXX)
       mount "$bdev" "$TMP_MNT"
-      mapfile -t subvols < <(
-        btrfs subvolume list -o "$TMP_MNT" | awk '{print $9}'
+
+      # Gather "ID:PATH" for each subvolume
+      mapfile -t subs < <(
+        btrfs subvolume list -o "$TMP_MNT" \
+          | awk '{print $2 ":" $9}'
       )
+
       umount "$TMP_MNT" && rmdir "$TMP_MNT"
-      if printf '%s\n' "${subvols[@]}" | grep -qx "@"; then
-        BTRFS_SUBVOL="@"
-      else
-        BTRFS_SUBVOL="5"
-      fi
+
+      # Prefer “@” then “root”, else fall back to first subvol name
+      BTRFS_SUBVOL=""
+      for pref in '@' 'root'; do
+        for entry in "${subs[@]}"; do
+          if [[ "${entry#*:}" == "$pref" ]]; then
+            BTRFS_SUBVOL="$pref"
+            break 2
+          fi
+        done
+      done
+      [[ -n "$BTRFS_SUBVOL" ]] || BTRFS_SUBVOL="${subs[0]#*:}"
+
       ROOT_PART="$bdev"
-      verbose_log "Selected BTRFS_SUBVOL=$BTRFS_SUBVOL"
+      verbose_log "Selected BTRFS_SUBVOL=${BTRFS_SUBVOL}"
     else
-      # 7) Native filesystem fallback
+      # Fallback to native filesystem
       verbose_log "Falling back to native FS (ext4, xfs, exfat)"
       ROOT_PART=$(
         jq -r '
@@ -275,9 +288,9 @@ detect_partitions() {
           | "/dev/"+.name
         ' <<<"$lsblk_json" | head -n1
       )
-      [[ -n "$ROOT_PART" ]] || { log "No suitable native filesystem found"; exit 1; }
+      [[ -n "$ROOT_PART" ]] \
+        || { log "No suitable native filesystem found"; exit 1; }
     fi
-  fi
 
   # 8) EFI partition detection (always from flattened list)
   EFI_PART=$(
