@@ -67,29 +67,51 @@ init_log() {
 # Cleanup #
 ###########
 cleanup() {
-  verbose_log "Running cleanup"
-  # Unmount EFI if mounted
-  if mountpoint -q "${CHROOT_DIR}/boot/efi"; then
-    umount "${CHROOT_DIR}/boot/efi" || true
-  fi
-  # Unmount virtual filesystems
-  for fs in dev sys proc; do
-    if mountpoint -q "${CHROOT_DIR}/${fs}"; then
-      umount "${CHROOT_DIR}/${fs}" || true
+  log "Beginning cleanup of mount points"
+
+  # Helper: unmount a given target if mounted
+  _umount() {
+    local target="$1"
+    if mountpoint -q "$target"; then
+      log "Unmounting $target"
+      if ! umount "$target"; then
+        log "  Standard unmount failed for $target, trying lazy unmount"
+        umount -l "$target" || log "  Lazy unmount also failed for $target"
+      fi
     fi
+  }
+
+  # 1) Unmount everything under CHROOT_DIR in reverse-depth order
+  if [[ -d "$CHROOT_DIR" ]]; then
+    # Collect all mount points under $CHROOT_DIR
+    mapfile -t mounts < <(
+      mount | awk -v mnt="$CHROOT_DIR" '
+        $3 ~ "^"mnt {
+          # print depth, mountpoint
+          depth = gsub("/", "", $3)
+          print depth " " $3
+        }
+      ' | sort -rn
+    )
+    # Iterate and unmount
+    for entry in "${mounts[@]}"; do
+      target="${entry#* }"
+      _umount "$target"
+      rmdir "$target" 2>/dev/null || true
+    done
+  fi
+
+  # 2) Unmount auxiliary binds (bin, usr/bin, lib, lib64, etc.)
+  for dir in bin usr/bin lib lib64 usr/lib usr/lib64 run; do
+    _umount "${CHROOT_DIR}/${dir}"
+    rmdir "${CHROOT_DIR}/${dir}" 2>/dev/null || true
   done
-  # Unmount root
-  if mountpoint -q "${CHROOT_DIR}"; then
-    umount "${CHROOT_DIR}" || true
-  fi
-  rmdir "${CHROOT_DIR}" 2>/dev/null || true
-  # Cleanup Btrfs tmp mount
-  if [[ -n "${TMP_MNT}" ]]; then
-    if mountpoint -q "${TMP_MNT}"; then
-      umount "${TMP_MNT}" || true
-    fi
-    rmdir "${TMP_MNT}" 2>/dev/null || true
-  fi
+
+  # 3) Finally unmount and remove the root mount
+  _umount "$CHROOT_DIR"
+  rmdir "$CHROOT_DIR" 2>/dev/null || true
+
+  log "Cleanup complete"
 }
 
 trap 'cleanup; log "Exiting due to error"; exit 1' ERR INT TERM
