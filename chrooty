@@ -96,19 +96,19 @@ cleanup() {
     # Iterate and unmount
     for entry in "${mounts[@]}"; do
       target="${entry#* }"
-      _umount "$target"
+      _umount -l "$target"
       rmdir "$target" 2>/dev/null || true
     done
   fi
 
   # 2) Unmount auxiliary binds (bin, usr/bin, lib, lib64, etc.)
   for dir in bin usr/bin lib lib64 usr/lib usr/lib64 run; do
-    _umount "${CHROOT_DIR}/${dir}"
+    _umount -l "${CHROOT_DIR}/${dir}"
     rmdir "${CHROOT_DIR}/${dir}" 2>/dev/null || true
   done
 
   # 3) Finally unmount and remove the root mount
-  _umount "$CHROOT_DIR"
+  _umount -l "$CHROOT_DIR"
   rmdir "$CHROOT_DIR" 2>/dev/null || true
 
   log "Cleanup complete"
