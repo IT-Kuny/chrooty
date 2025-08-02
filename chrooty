@@ -465,15 +465,20 @@ for ld in lib lib64 usr/lib usr/lib64; do
     mount --bind "/usr/libexec/sudo" "${CHROOT_DIR}/usr/libexec/sudo"
 fi
 
-  # 3) Ensure DNS resolution
-if [[ -L /etc/resolv.conf ]]; then
-    # Preserve symlink type
-    local target; target=$(readlink /etc/resolv.conf)
-    cp -L "/etc/${target}" "${CHROOT_DIR}/etc/$(basename "$target")"
-    ln -sr "$(basename "$target")" "${CHROOT_DIR}/etc/resolv.conf"
+  # 3) Ensure DNS resolution inside the chroot
+  #    Remove any pre-existing file/link first:
+  rm -f "${CHROOT_DIR}/etc/resolv.conf"
+
+  if [[ -L /etc/resolv.conf ]]; then
+    # Host uses a symlink—preserve its target and type
+    target=$(readlink /etc/resolv.conf)
+    mkdir -p "${CHROOT_DIR}/etc/$(dirname "$target")"
+    cp -L "/etc/${target}" "${CHROOT_DIR}/etc/${target}"
+    ln -sfn "$target" "${CHROOT_DIR}/etc/resolv.conf"
   else
+    # Host uses a real file—just copy it
     cp -L /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
-fi
+  fi
 
   # 4) Enter the chroot
   log "Entering chroot with shell ${shell_path}"
