@@ -310,6 +310,67 @@ detect_partitions() {
   export ROOT_PART EFI_PART BTRFS_SUBVOL
 }
 
+choose_partitions() {
+  echo
+  echo "Loading partitions:"
+  lsblk -plno NAME,FSTYPE,SIZE,PARTLABEL | column -t
+
+  # Build arrays of candidates
+  mapfile -t os_parts < <(
+    lsblk -plno NAME,FSTYPE |
+      awk '$2 ~ /^(ext4|xfs|exfat|btrfs|LVM2_member|zfs_member)$/ { print $1 " (" $2 ")" }'
+  )
+  mapfile -t efi_parts < <(
+    lsblk -plno NAME,FSTYPE,PARTLABEL |
+      awk '$2 ~ /^(vfat|fat32)$/ && tolower($3) ~ /efi/ { print $1 " (" $2 ")" }'
+  )
+
+  # ----- OS selection -----
+  echo
+  echo "OS (root) partition candidates:"
+  for i in "${!os_parts[@]}"; do
+    printf "  %d) %s\n" $((i+1)) "${os_parts[i]}"
+  done
+  local os_prompt="Select OS partition [1]: "
+  read -rp "$os_prompt" os_choice
+  if [[ -z "$os_choice" ]]; then
+    os_choice=1
+  fi
+  if ! [[ "$os_choice" =~ ^[0-9]+$ ]] || (( os_choice < 1 || os_choice > ${#os_parts[@]} )); then
+    echo "Invalid choice; defaulting to 1."
+    os_choice=1
+  fi
+  ROOT_PART="${os_parts[os_choice-1]%% *}"
+  echo "-> Using OS partition: $ROOT_PART"
+
+  # ----- EFI selection -----
+  if (( ${#efi_parts[@]} == 0 )); then
+    echo
+    echo "No EFI partition detected; continuing in BIOS mode."
+    EFI_PART=""
+  else
+    echo
+    echo "EFI partition candidates:"
+    for i in "${!efi_parts[@]}"; do
+      printf "  %d) %s\n" $((i+1)) "${efi_parts[i]}"
+    done
+    local efi_prompt="Select EFI partition [1]: "
+    read -rp "$efi_prompt" efi_choice
+    if [[ -z "$efi_choice" ]]; then
+      efi_choice=1
+    fi
+    if ! [[ "$efi_choice" =~ ^[0-9]+$ ]] || (( efi_choice < 1 || efi_choice > ${#efi_parts[@]} )); then
+      echo "Invalid choice; defaulting to 1."
+      efi_choice=1
+    fi
+    EFI_PART="${efi_parts[efi_choice-1]%% *}"
+    echo "-> Using EFI partition: $EFI_PART"
+  fi
+
+  verbose_log "User selected ROOT_PART=${ROOT_PART}, EFI_PART=${EFI_PART:-<none>}"
+  log "User selected ROOT_PART=${ROOT_PART}, EFI_PART=${EFI_PART:-<none>}"
+}
+
 mount_chroot() {
   verbose_log "Mounting root filesystem at ${CHROOT_DIR}"
   mkdir -p "${CHROOT_DIR}"
