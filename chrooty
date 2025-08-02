@@ -489,7 +489,7 @@ fi
 
   # 4) Enter the chroot
   log "Entering chroot with shell ${shell_path}"
-  chroot "${CHROOT_DIR}" "${shell_path}"for dir in bin usr/bin lib lib64 usr/lib usr/lib64 run; do
+  chroot "${CHROOT_DIR}" "${shell_path}"
 }
 
 ########
