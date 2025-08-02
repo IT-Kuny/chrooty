@@ -410,6 +410,8 @@ mount_chroot() {
 
     # 4) Bind-mount DNS
     mkdir -p "${CHROOT_DIR}/etc"
+    # Ensure the target file exists
+    : > "${CHROOT_DIR}/etc/resolv.conf"
     if [[ -e /etc/resolv.conf ]]; then
       mount --bind /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
     fi
