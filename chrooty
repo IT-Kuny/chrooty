@@ -293,29 +293,27 @@ mount_chroot() {
   local root_fstype
   root_fstype=$(blkid -s TYPE -o value "${ROOT_PART}")
 
-  if [[ -n "$BTRFS_SUBVOL" ]]; then
-    # If BTRFS_SUBVOL is numeric, use subvolid; otherwise mount by name
-    if [[ "$BTRFS_SUBVOL" =~ ^[0-9]+$ ]]; then
-      mount -t btrfs -o subvolid="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
-    else
-      mount -t btrfs -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
-    fi
+if [[ -n "$BTRFS_SUBVOL" ]]; then
+  # Btrfs path: numeric → subvolid, otherwise by name
+  if [[ "$BTRFS_SUBVOL" =~ ^[0-9]+$ ]]; then
+    mount -t btrfs -o subvolid="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
   else
-    # Non-Btrfs path unchanged
-    if [[ -n "$root_fstype" ]]; then
-      mount -t "$root_fstype" "${ROOT_PART}" "${CHROOT_DIR}"
-    else
-      mount "${ROOT_PART}" "${CHROOT_DIR}"
-    fi
-  else
-    # For other filesystems, include -t for reliability
-    if [[ -n "${root_fstype}" ]]; then
-      mount -t "${root_fstype}" "${ROOT_PART}" "${CHROOT_DIR}"
-    else
-      # Fallback to auto-detect
-      mount "${ROOT_PART}" "${CHROOT_DIR}"
-    fi
+    mount -t btrfs -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
   fi
+
+elif [[ -n "$root_fstype" ]]; then
+  # Non-Btrfs path unchanged
+  mount -t "$root_fstype" "${ROOT_PART}" "${CHROOT_DIR}"
+
+else
+  # For other filesystems, include -t for reliability
+  if [[ -n "${root_fstype}" ]]; then
+    mount -t "${root_fstype}" "${ROOT_PART}" "${CHROOT_DIR}"
+  else
+    # Fallback to auto-detect
+    mount "${ROOT_PART}" "${CHROOT_DIR}"
+  fi
+fi
 
   # Bind /proc, /sys, /dev
   for fs in proc sys dev; do
