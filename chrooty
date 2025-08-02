@@ -430,8 +430,10 @@ mount_chroot() {
       mount --bind /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
     fi
 
-    # 5) Populate /etc/mtab
-    cp /proc/mounts "${CHROOT_DIR}/etc/mtab"
+    # 5) Populate /etc/mtab only if target isn’t already the same file
+    if ! cmp -s /proc/mounts "${CHROOT_DIR}/etc/mtab"; then
+      cp /proc/mounts "${CHROOT_DIR}/etc/mtab"
+    fi
 
     # 6) Mount EFI if present
     if [[ -n "${EFI_PART}" ]]; then
