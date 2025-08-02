@@ -289,23 +289,37 @@ mount_chroot() {
   mkdir -p "${CHROOT_DIR}"
   run_pre_chroot_hooks
 
+  # Determine filesystem type for the root device
+  local root_fstype
+  root_fstype=$(blkid -s TYPE -o value "${ROOT_PART}")
+
   if [[ -n "${BTRFS_SUBVOL}" ]]; then
-    mount -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
+    # Explicitly specify btrfs and subvolume
+    mount -t btrfs -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
   else
-    mount "${ROOT_PART}" "${CHROOT_DIR}"
+    # For other filesystems, include -t for reliability
+    if [[ -n "${root_fstype}" ]]; then
+      mount -t "${root_fstype}" "${ROOT_PART}" "${CHROOT_DIR}"
+    else
+      # Fallback to auto-detect
+      mount "${ROOT_PART}" "${CHROOT_DIR}"
+    fi
   fi
 
+  # Bind /proc, /sys, /dev
   for fs in proc sys dev; do
     mount --bind "/${fs}" "${CHROOT_DIR}/${fs}"
   done
 
+  # EFI mount (vfat)
   if [[ -n "${EFI_PART}" ]]; then
     mkdir -p "${CHROOT_DIR}/boot/efi"
-    mount "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
+    mount -t vfat "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
   fi
 
   log "Mount complete"
 }
+
 
 unmount_chroot() {
   cleanup             # core unmount logic
