@@ -291,6 +291,7 @@ detect_partitions() {
       [[ -n "$ROOT_PART" ]] \
         || { log "No suitable native filesystem found"; exit 1; }
     fi
+  fi
 
   # 8) EFI partition detection (always from flattened list)
   EFI_PART=$(
@@ -454,7 +455,7 @@ unmount_chroot() {
 ###################
 # Enter the Chroot#
 ###################
- enter_chroot() {
+enter_chroot() {
    log "Locating shell inside chroot"
    local candidates=( /bin/bash /usr/bin/bash /usr/bin/zsh /bin/zsh /bin/sh /usr/bin/sh )
    local shell_path=""
