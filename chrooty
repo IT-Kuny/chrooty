@@ -284,8 +284,31 @@ detect_partitions() {
   export ROOT_PART EFI_PART BTRFS_SUBVOL
 }
 
+mount_chroot() {
+  verbose_log "Mounting chroot at ${CHROOT_DIR}"
+  mkdir -p "${CHROOT_DIR}"
+  run_pre_chroot_hooks
+
+  if [[ -n "${BTRFS_SUBVOL}" ]]; then
+    mount -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
+  else
+    mount "${ROOT_PART}" "${CHROOT_DIR}"
+  fi
+
+  for fs in proc sys dev; do
+    mount --bind "/${fs}" "${CHROOT_DIR}/${fs}"
+  done
+
+  if [[ -n "${EFI_PART}" ]]; then
+    mkdir -p "${CHROOT_DIR}/boot/efi"
+    mount "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
+  fi
+
+  log "Mount complete"
+}
+
 unmount_chroot() {
-  cleanup
+  cleanup             # core unmount logic
   run_post_chroot_hooks
   log "Unmount complete"
 }
