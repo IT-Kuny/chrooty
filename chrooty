@@ -402,23 +402,36 @@ else
   fi
 fi
 
-  # 2) Bind-mount system pseudo-filesystems
-  for dir in dev dev/pts proc sys run; do
-    mkdir -p "${CHROOT_DIR}/${dir}"
-    mount --bind "/${dir}" "${CHROOT_DIR}/${dir}"
-  done
-
-  # 3) Populate /etc/mtab in the chroot (optional but traditional)
-  mkdir -p "${CHROOT_DIR}/etc"
-  cp /proc/mounts "${CHROOT_DIR}/etc/mtab"
-
-  # 4) Mount EFI if present
-  if [[ -n "${EFI_PART}" ]]; then
-    mkdir -p "${CHROOT_DIR}/boot/efi"
-    mount -t vfat "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
+  local populated=0
+  if [[ -d "${CHROOT_DIR}/etc" && "${CHROOT_DIR}/bin" ]] && [[ -n "$(ls -A "${CHROOT_DIR}/etc")" ]]; then
+    populated=1
   fi
 
-  log "Mount complete"
+    # 3) Bind-mount system pseudo-filesystems
+    for dir in dev dev/pts proc sys run; do
+      mkdir -p "${CHROOT_DIR}/${dir}"
+      mount --bind "/${dir}" "${CHROOT_DIR}/${dir}"
+    done
+
+    # 4) Bind-mount DNS
+    if [[ -f /etc/resolv.conf ]]; then
+      mount --bind /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
+    fi
+
+    # 5) Copy /etc/mtab
+    cp /proc/mounts "${CHROOT_DIR}/etc/mtab"
+
+    # 6) Mount EFI if requested
+    if [[ -n "${EFI_PART}" ]]; then
+      mkdir -p "${CHROOT_DIR}/boot/efi"
+      mount -t vfat "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
+    fi
+
+    log "All binds complete"
+  else
+    verbose_log "Target filesystem seems empty—skipping bind mounts and DNS"
+    log "Warning: root partition ${ROOT_PART} is empty"
+  fi
 }
 
 unmount_chroot() {
@@ -465,13 +478,8 @@ for ld in lib lib64 usr/lib usr/lib64; do
     mount --bind "/usr/libexec/sudo" "${CHROOT_DIR}/usr/libexec/sudo"
 fi
 
-  # 3) Ensure DNS resolution inside the chroot
-  #    Remove any pre-existing file/link first:
-  rm -f "${CHROOT_DIR}/etc/resolv.conf"
-
-  # Bind-mount resolv.conf directly
-  if [[ -e /etc/resolv.conf ]]; then
-    mkdir -p "${CHROOT_DIR}/etc"
+  # Only bind-mount host /etc/resolv.conf if the OS image already has /etc
+  if [[ -d "${CHROOT_DIR}/etc" && -e /etc/resolv.conf ]]; then
     mount --bind /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
   fi
 
