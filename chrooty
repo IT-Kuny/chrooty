@@ -315,16 +315,15 @@ else
   fi
 fi
 
-  # Bind /proc, /sys, /dev
+ # Bind-mount only the necessary virtual filesystems
   for fs in proc sys dev; do
     mkdir -p "${CHROOT_DIR}/${fs}"
     mount --bind "/${fs}" "${CHROOT_DIR}/${fs}"
   done
 
-  # EFI mount (vfat)
+  # Mount EFI if present
   if [[ -n "${EFI_PART}" ]]; then
     mkdir -p "${CHROOT_DIR}/boot/efi"
-    # EFI is always vfat
     mount -t vfat "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
   fi
 
@@ -341,8 +340,41 @@ unmount_chroot() {
 # Enter the Chroot#
 ###################
 enter_chroot() {
-  log "Entering chroot"
-  exec chroot "${CHROOT_DIR}" /bin/bash
+  log "Locating shell inside chroot"
+  # List of candidate shells, in order of preference
+  local candidates=(/bin/bash /usr/bin/bash /bin/sh /usr/bin/sh)
+  local shell_path=""
+
+  for sh in "${candidates[@]}"; do
+    if [[ -x "${CHROOT_DIR}${sh}" ]]; then
+      shell_path="$sh"
+      break
+    fi
+  done
+
+  if [[ -z "$shell_path" ]]; then
+    log "No shell found in ${CHROOT_DIR}; binding host binaries as fallback"
+    # Bind host /bin and /usr/bin into the chroot
+    for d in bin usr/bin; do
+      mkdir -p "${CHROOT_DIR}/${d}"
+      mount --bind "/${d}" "${CHROOT_DIR}/${d}"
+    done
+    # Re-attempt to find a shell
+    for sh in "${candidates[@]}"; do
+      if [[ -x "${CHROOT_DIR}${sh}" ]]; then
+        shell_path="$sh"
+        break
+      fi
+    done
+    if [[ -z "$shell_path" ]]; then
+      log "ERROR: Still no shell available in chroot; aborting"
+      echo "chrooty: No shell available in target environment." >&2
+      exit 1
+    fi
+  fi
+
+  log "Entering chroot with shell ${shell_path}"
+  exec chroot "${CHROOT_DIR}" "${shell_path}"
 }
 
 ########
