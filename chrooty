@@ -385,7 +385,7 @@ choose_partitions() {
   log "User selected ROOT_PART=${ROOT_PART}, EFI_PART=${EFI_PART:-<none>}"
 }
 
-mmount_chroot() {
+mount_chroot() {
   verbose_log "Mounting root filesystem at ${CHROOT_DIR}"
   mkdir -p "${CHROOT_DIR}"
   run_pre_chroot_hooks
