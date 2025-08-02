@@ -444,24 +444,23 @@ enter_chroot() {
   done
 
   # 2) Fallback: bind host bins & libs if no shell
-  if [[ -z "$shell_path" ]]; then
-    log "No shell in chroot; binding host binaries and libraries"
-    for d in bin usr/bin; do
-      mkdir -p "${CHROOT_DIR}/${d}"
-      mount --bind "/${d}" "${CHROOT_DIR}/${d}"
-    done
-    for ld in lib lib64 usr/lib usr/lib64; do
-      [[ -d "/${ld}" ]] || continue
-      mkdir -p "${CHROOT_DIR}/${ld}"
-      mount --bind "/${ld}" "${CHROOT_DIR}/${ld}"
-    done
-    for sh in "${candidates[@]}"; do
-      [[ -x "${CHROOT_DIR}${sh}" ]] && shell_path="$sh" && break
-    done
-    [[ -n "$shell_path" ]] || {
-      echo "chrooty: ERROR: No shell available even after binding host libs" >&2
-      exit 1
-    }
+if [[ -z "$shell_path" ]]; then
+  log "No shell in chroot; binding host binaries and libraries"
+  # Binaries
+  for d in bin usr/bin; do
+    mkdir -p "${CHROOT_DIR}/${d}"
+    mount --bind "/${d}" "${CHROOT_DIR}/${d}"
+  done
+  # Libraries
+  for ld in lib lib64 usr/lib usr/lib64; do
+    [[ -d "/${ld}" ]] || continue
+    mkdir -p "${CHROOT_DIR}/${ld}"
+    mount --bind "/${ld}" "${CHROOT_DIR}/${ld}"
+  done
+  # **sudo’s helper modules**
+  if [[ -d /usr/libexec/sudo ]]; then
+    mkdir -p "${CHROOT_DIR}/usr/libexec/sudo"
+    mount --bind "/usr/libexec/sudo" "${CHROOT_DIR}/usr/libexec/sudo"
   fi
 
   # 3) Ensure DNS resolution
