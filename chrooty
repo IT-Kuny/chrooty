@@ -182,134 +182,6 @@ run_post_chroot_hooks() {
 #################################
 #  Partition & Volume Detection #
 #################################
-detect_partitions() {
-  verbose_log "Detecting partitions and volumes"
-
-  # 1) Retrieve raw JSON from lsblk
-  local raw_lsblk
-  raw_lsblk=$(lsblk --json -o NAME,TYPE,PTTYPE,PARTLABEL,FSTYPE) || {
-    log "Failed to run lsblk"
-    exit 1
-  }
-
-  # 2) Flatten blockdevices + nested children into one array
-  #    We drop the original top-level wrapper to get .[] items directly.
-  local lsblk_json
-  lsblk_json=$(
-    jq -c '
-      [ .blockdevices[] 
-        | { name, type, pttype, partlabel, fstype } ] +
-      [ .blockdevices[] 
-        | .children[]? 
-        | { name, type, pttype, partlabel, fstype } ]
-    ' <<<"$raw_lsblk"
-  ) || { log "Failed to flatten lsblk JSON"; exit 1; }
-
-  # 3) (Verbose) Report top-level disks and their partition tables
-  if (( VERBOSE )); then
-    verbose_log "Disks and partition tables:"
-    jq -r '
-      .blockdevices[] 
-      | select(.type=="disk") 
-      | "  /dev/\(.name): table=\(.pttype // \"unknown\")"
-    ' <<<"$raw_lsblk" | while read -r line; do
-      log "$line"
-      echo "$line"
-    done
-  fi
-
-  # 4) LVM detection
-  if jq -e '.[] | select(.fstype=="LVM2_member")' <<<"$lsblk_json" &>/dev/null; then
-    verbose_log "LVM PVs detected—scanning for LV"
-    pvscan --cache &>/dev/null
-    vgscan --mknodes &>/dev/null
-    ROOT_PART=$(
-      lvscan --verbose \
-        | awk '/^  ACTIVE/ { gsub(/"/,"",$2); print $2; exit }'
-    )
-    [[ -n "$ROOT_PART" ]] || { log "No active LVM LV found"; exit 1; }
-
-  # 5) ZFS detection
-  elif jq -e '.[] | select(.fstype=="zfs_member")' <<<"$lsblk_json" &>/dev/null; then
-    verbose_log "ZFS detected—selecting first zvol"
-    local zvol
-    zvol=$(zfs list -H -o name -t volume | head -n1)
-    [[ -n "$zvol" ]] || { log "No ZFS volume found"; exit 1; }
-    ROOT_PART="/dev/zvol/${zvol}"
-
-  # 6) Btrfs detection
-  else
-    local bdev
-    bdev=$(
-      jq -r '
-        .[] 
-        | select(.type=="part" and .fstype=="btrfs") 
-        | "/dev/"+.name
-      ' <<<"$lsblk_json" | head -n1
-    )
-    if [[ -n "$bdev" ]]; then
-      verbose_log "Btrfs detected on $bdev—inspecting subvolumes"
-      TMP_MNT=$(mktemp -d /dev/shm/chrooty.XXXX)
-      mount "$bdev" "$TMP_MNT"
-      mapfile -t subvols < <(
-        btrfs subvolume list -o "$TMP_MNT" | awk '{print $9}'
-      )
-      umount "$TMP_MNT" && rmdir "$TMP_MNT"
-      if printf '%s\n' "${subvols[@]}" | grep -qx "@"; then
-        BTRFS_SUBVOL="@"
-      else
-        BTRFS_SUBVOL="5"
-      fi
-      ROOT_PART="$bdev"
-      verbose_log "Selected BTRFS_SUBVOL=$BTRFS_SUBVOL"
-    else
-      # 7) Native filesystem fallback
-      verbose_log "Falling back to native FS (ext4, xfs, exfat)"
-      ROOT_PART=$(
-        jq -r '
-          .[] 
-          | select(
-              .type=="part" and
-              (.fstype=="ext4" or .fstype=="xfs" or .fstype=="exfat")
-            )
-          | "/dev/"+.name
-        ' <<<"$lsblk_json" | head -n1
-      )
-      [[ -n "$ROOT_PART" ]] || { log "No suitable native filesystem found"; exit 1; }
-    fi
-  fi
-
-  # 8) EFI partition detection (always from flattened list)
-  EFI_PART=$(
-    jq -r '
-      .[] 
-      | select(
-          .type=="part" and
-          (.fstype=="vfat" or .fstype=="fat32") and
-          (.partlabel | test("EFI"; "i"))
-        )
-      | "/dev/"+.name
-    ' <<<"$lsblk_json" | head -n1
-  )
-
-  verbose_log "Using ROOT_PART=$ROOT_PART"
-  if [[ -n "$EFI_PART" ]]; then
-    verbose_log "Detected EFI_PART=$EFI_PART"
-  elif (( UEFI_ONLY )); then
-    log "EFI-only mode but no EFI partition found"
-    exit 1
-  fi
-
-  # 9) Final sanity check via blkid
-  blkid "$ROOT_PART" &>/dev/null \
-    || { log "blkid probe failed on $ROOT_PART"; exit 1; }
-  [[ -z "$EFI_PART" ]] \
-    || blkid "$EFI_PART" &>/dev/null \
-       || { log "blkid probe failed on $EFI_PART"; exit 1; }
-
-  export ROOT_PART EFI_PART BTRFS_SUBVOL
-}
-
 choose_partitions() {
   echo
   echo "Detected partitions:"
@@ -325,44 +197,46 @@ choose_partitions() {
       awk '$2 ~ /^(vfat|fat32)$/ && tolower($3) ~ /efi/ { print $1 " (" $2 ")" }'
   )
 
-  # Choose ROOT_PART
-  if (( ${#os_parts[@]} == 1 )); then
-    echo
-    echo "Single OS partition detected: ${os_parts[0]}"
-    read -rn1 -p "Press any key to confirm... " 
-    echo
-    ROOT_PART="${os_parts[0]%% *}"
-  else
-    echo
-    echo "Select the partition to use for the OS/root:"
-    select entry in "${os_parts[@]}"; do
-      if [[ -n "$entry" ]]; then
-        ROOT_PART="${entry%% *}"
-        break
-      fi
-    done
+  # ----- OS selection -----
+  echo
+  echo "OS (root) partition candidates:"
+  for i in "${!os_parts[@]}"; do
+    printf "  %d) %s\n" $((i+1)) "${os_parts[i]}"
+  done
+  local os_prompt="Select OS partition [1]: "
+  read -rp "$os_prompt" os_choice
+  if [[ -z "$os_choice" ]]; then
+    os_choice=1
   fi
+  if ! [[ "$os_choice" =~ ^[0-9]+$ ]] || (( os_choice < 1 || os_choice > ${#os_parts[@]} )); then
+    echo "Invalid choice; defaulting to 1."
+    os_choice=1
+  fi
+  ROOT_PART="${os_parts[os_choice-1]%% *}"
+  echo "-> Using OS partition: $ROOT_PART"
 
-  # Choose EFI_PART (if any)
+  # ----- EFI selection -----
   if (( ${#efi_parts[@]} == 0 )); then
     echo
     echo "No EFI partition detected; continuing in BIOS mode."
     EFI_PART=""
-  elif (( ${#efi_parts[@]} == 1 )); then
-    echo
-    echo "Single EFI partition detected: ${efi_parts[0]}"
-    read -rn1 -p "Press any key to confirm... "
-    echo
-    EFI_PART="${efi_parts[0]%% *}"
   else
     echo
-    echo "Select the partition to use for EFI:"
-    select entry in "${efi_parts[@]}"; do
-      if [[ -n "$entry" ]]; then
-        EFI_PART="${entry%% *}"
-        break
-      fi
+    echo "EFI partition candidates:"
+    for i in "${!efi_parts[@]}"; do
+      printf "  %d) %s\n" $((i+1)) "${efi_parts[i]}"
     done
+    local efi_prompt="Select EFI partition [1]: "
+    read -rp "$efi_prompt" efi_choice
+    if [[ -z "$efi_choice" ]]; then
+      efi_choice=1
+    fi
+    if ! [[ "$efi_choice" =~ ^[0-9]+$ ]] || (( efi_choice < 1 || efi_choice > ${#efi_parts[@]} )); then
+      echo "Invalid choice; defaulting to 1."
+      efi_choice=1
+    fi
+    EFI_PART="${efi_parts[efi_choice-1]%% *}"
+    echo "-> Using EFI partition: $EFI_PART"
   fi
 
   verbose_log "User selected ROOT_PART=${ROOT_PART}, EFI_PART=${EFI_PART:-<none>}"
