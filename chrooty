@@ -289,7 +289,7 @@ mount_chroot() {
   mkdir -p "${CHROOT_DIR}"
   run_pre_chroot_hooks
 
-  # Determine filesystem type for the root device
+  # 1) Determine filesystem type for the root device
   local root_fstype
   root_fstype=$(blkid -s TYPE -o value "${ROOT_PART}")
 
@@ -315,13 +315,17 @@ else
   fi
 fi
 
- # Bind-mount only the necessary virtual filesystems
-  for fs in proc sys dev; do
-    mkdir -p "${CHROOT_DIR}/${fs}"
-    mount --bind "/${fs}" "${CHROOT_DIR}/${fs}"
+  # 2) Bind-mount system pseudo-filesystems
+  for dir in dev dev/pts proc sys run; do
+    mkdir -p "${CHROOT_DIR}/${dir}"
+    mount --bind "/${dir}" "${CHROOT_DIR}/${dir}"
   done
 
-  # Mount EFI if present
+  # 3) Populate /etc/mtab in the chroot (optional but traditional)
+  mkdir -p "${CHROOT_DIR}/etc"
+  cp /proc/mounts "${CHROOT_DIR}/etc/mtab"
+
+  # 4) Mount EFI if present
   if [[ -n "${EFI_PART}" ]]; then
     mkdir -p "${CHROOT_DIR}/boot/efi"
     mount -t vfat "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
@@ -341,10 +345,10 @@ unmount_chroot() {
 ###################
 enter_chroot() {
   log "Locating shell inside chroot"
-  local candidates=(/bin/bash /usr/bin/bash /bin/sh /usr/bin/sh)
+  local candidates=( /bin/bash /usr/bin/bash /bin/sh /usr/bin/sh )
   local shell_path=""
 
-  # 1) Try to find a native shell in the target
+  # 1) Try target-native shells
   for sh in "${candidates[@]}"; do
     if [[ -x "${CHROOT_DIR}${sh}" ]]; then
       shell_path="$sh"
@@ -352,36 +356,38 @@ enter_chroot() {
     fi
   done
 
-  # 2) If none, bind host bins *and* libs
+  # 2) Fallback: bind host bins & libs if no shell
   if [[ -z "$shell_path" ]]; then
     log "No shell in chroot; binding host binaries and libraries"
     for d in bin usr/bin; do
-      mkdir -p "${CHROOT_DIR}/$d"
-      mount --bind "/$d" "${CHROOT_DIR}/$d"
+      mkdir -p "${CHROOT_DIR}/${d}"
+      mount --bind "/${d}" "${CHROOT_DIR}/${d}"
     done
-    for ld in lib lib64 usr/lib; do
-      if [[ -d "/$ld" ]]; then
-        mkdir -p "${CHROOT_DIR}/$ld"
-        mount --bind "/$ld" "${CHROOT_DIR}/$ld"
-      fi
+    for ld in lib lib64 usr/lib usr/lib64; do
+      [[ -d "/${ld}" ]] || continue
+      mkdir -p "${CHROOT_DIR}/${ld}"
+      mount --bind "/${ld}" "${CHROOT_DIR}/${ld}"
     done
-    # Retry finding the shell
     for sh in "${candidates[@]}"; do
-      if [[ -x "${CHROOT_DIR}${sh}" ]]; then
-        shell_path="$sh"
-        break
-      fi
+      [[ -x "${CHROOT_DIR}${sh}" ]] && shell_path="$sh" && break
     done
-    if [[ -z "$shell_path" ]]; then
-      echo "chrooty: No usable shell after binding host libs." >&2
+    [[ -n "$shell_path" ]] || {
+      echo "chrooty: ERROR: No shell available even after binding host libs" >&2
       exit 1
-    fi
+    }
   fi
 
-  # 3) Copy resolv.conf so DNS works
-  mkdir -p "${CHROOT_DIR}/etc"
-  cp -L /etc/resolv.conf "${CHROOT_DIR}/etc/"
+  # 3) Ensure DNS resolution
+  if [[ -L /etc/resolv.conf ]]; then
+    # Preserve symlink type
+    local target; target=$(readlink /etc/resolv.conf)
+    cp -L "/etc/${target}" "${CHROOT_DIR}/etc/$(basename "$target")"
+    ln -sr "$(basename "$target")" "${CHROOT_DIR}/etc/resolv.conf"
+  else
+    cp -L /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
+  fi
 
+  # 4) Enter the chroot
   log "Entering chroot with shell ${shell_path}"
   exec chroot "${CHROOT_DIR}" "${shell_path}"
 }
