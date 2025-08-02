@@ -1,0 +1,7 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_install:
+	install -d debian/chrooty/usr/bin
+	install -m0755 chrooty debian/chrooty/usr/bin/chrooty

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: Formatting & Linting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install ShellCheck & shfmt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          go install mvdan.cc/sh/v3/cmd/shfmt@latest
+          echo "$HOME/go/bin" >> $GITHUB_PATH
+      - name: Check shell formatting with shfmt
+        run: shfmt -l -w .
+      - name: Run ShellCheck
+        run: shellcheck -x ./*.sh
+
+  test:
+    name: Run Bats Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq lvm2 btrfs-progs zfsutils-linux dosfstools parted util-linux bats-core
+      - name: Run Bats tests
+        run: bats tests/*.sh
+
+  container_test:
+    name: Containerized Hardware Simulation Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Build test container
+        run: docker build -t chrooty-test .
+      - name: Run in privileged container
+        run: docker run --rm --privileged chrooty-test

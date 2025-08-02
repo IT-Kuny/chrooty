@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# chrooty: rescue and chroot utility
+# – robust error handling, modular structure, dynamic volume detection,
+#   EFI support, interactive & non-interactive modes, verbose logging,
+#   self-provisioned log rotation, and extensible plugin architecture.
+
+set -euo pipefail
+IFS=$'\n\t'
+
+APP="chrooty"
+LOGFILE="/var/log/${APP}.log"
+CHROOT_DIR="/mnt/${APP}"
+HOOK_DIR="hooks"
+PRE_HOOK_DIR="${HOOK_DIR}/pre_chroot.d"
+POST_HOOK_DIR="${HOOK_DIR}/post_chroot.d"
+TMP_MNT=""
+NONINTERACTIVE=0
+SYSTEM_ONLY=0
+UEFI_ONLY=0
+VERBOSE=0
+BTRFS_SUBVOL=""
+
+########################
+# 0) Logging & Rotation#
+########################
+
+log() {
+  local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
+  echo "${ts} ${APP}: $1" >> "${LOGFILE}"
+}
+
+verbose_log() {
+  log "$1"
+  if (( VERBOSE )); then
+    echo "${APP}: $1"
+  fi
+}
+
+install_logrotate() {
+  local cfg="/etc/logrotate.d/${APP}"
+  if [[ ! -f "$cfg" ]]; then
+    cat <<'EOF' > "$cfg"
+/var/log/chrooty.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    create 0640 root adm
+}
+EOF
+    chmod 644 "$cfg"
+    log "Installed logrotate config at $cfg"
+  else
+    log "Logrotate config already present at $cfg"
+  fi
+}
+
+init_log() {
+  touch "${LOGFILE}"
+  chmod 640 "${LOGFILE}" || true
+  log "Log initialized"
+  install_logrotate
+}
+
+###########
+# Cleanup #
+###########
+cleanup() {
+  verbose_log "Running cleanup"
+  # Unmount EFI if mounted
+  if mountpoint -q "${CHROOT_DIR}/boot/efi"; then
+    umount "${CHROOT_DIR}/boot/efi" || true
+  fi
+  # Unmount virtual filesystems
+  for fs in dev sys proc; do
+    if mountpoint -q "${CHROOT_DIR}/${fs}"; then
+      umount "${CHROOT_DIR}/${fs}" || true
+    fi
+  done
+  # Unmount root
+  if mountpoint -q "${CHROOT_DIR}"; then
+    umount "${CHROOT_DIR}" || true
+  fi
+  rmdir "${CHROOT_DIR}" 2>/dev/null || true
+  # Cleanup Btrfs tmp mount
+  if [[ -n "${TMP_MNT}" ]]; then
+    if mountpoint -q "${TMP_MNT}"; then
+      umount "${TMP_MNT}" || true
+    fi
+    rmdir "${TMP_MNT}" 2>/dev/null || true
+  fi
+}
+
+trap 'cleanup; log "Exiting due to error"; exit 1' ERR INT TERM
+
+###################
+# Argument parser #
+###################
+parse_args() {
+  local opts
+  opts=$(getopt -o nv --long no-prompt,verbose,system,uefi -n "${APP}" -- "$@") || exit 1
+  eval set -- "$opts"
+  while true; do
+    case "$1" in
+      -n|--no-prompt) NONINTERACTIVE=1; shift ;;
+      -v|--verbose)   VERBOSE=1;        shift ;;
+      --system)       SYSTEM_ONLY=1;    shift ;;
+      --uefi)         UEFI_ONLY=1;      shift ;;
+      --)             shift; break ;;
+      *) echo "${APP}: Invalid option: $1" >&2; exit 1 ;;
+    esac
+  done
+
+  # Validate combinations
+  if (( SYSTEM_ONLY && UEFI_ONLY )); then
+    echo "${APP}: Cannot specify both --system and --uefi" >&2
+    exit 1
+  fi
+  if (( NONINTERACTIVE && SYSTEM_ONLY==0 && UEFI_ONLY==0 )); then
+    echo "${APP}: --no-prompt requires either --system or --uefi" >&2
+    exit 1
+  fi
+  (( VERBOSE )) && verbose_log "Flags - no-prompt=${NONINTERACTIVE}, system=${SYSTEM_ONLY}, uefi=${UEFI_ONLY}"
+  if (( NONINTERACTIVE==0 )); then
+    verbose_log "Interactive mode enabled"
+  fi
+}
+
+########################################
+# Plugin Infrastructure (pre/post hooks)
+########################################
+ensure_hook_dirs() {
+  mkdir -p "${PRE_HOOK_DIR}" "${POST_HOOK_DIR}"
+  log "Ensured hook directories exist"
+}
+
+run_pre_chroot_hooks() {
+  verbose_log "Executing pre-chroot hooks"
+  for hook in "${PRE_HOOK_DIR}"/*.sh; do
+    [[ -x "$hook" ]] || continue
+    verbose_log "› Running hook: $(basename "$hook")"
+    source "$hook"
+  done
+}
+
+run_post_chroot_hooks() {
+  verbose_log "Executing post-chroot hooks"
+  for hook in "${POST_HOOK_DIR}"/*.sh; do
+    [[ -x "$hook" ]] || continue
+    verbose_log "› Running hook: $(basename "$hook")"
+    source "$hook"
+  done
+}
+
+#################################
+#  Partition & Volume Detection #
+#################################
+detect_partitions() {
+  verbose_log "Detecting partitions and volumes"
+  local lsblk_json
+  lsblk_json=$(lsblk --json -o NAME,TYPE,PTTYPE,PARTLABEL,FSTYPE) || {
+    log "Failed to run lsblk"; exit 1
+  }
+
+  # Verbose disk report
+  if (( VERBOSE )); then
+    verbose_log "Disks and partition tables:"
+    jq -r '.blockdevices[] | select(.type=="disk") | "  /dev/\(.name): table=\(.pttype // \"unknown\")"'       <<<"$lsblk_json" | while read -r line; do log "$line"; echo "$line"; done
+  fi
+
+  # 1) LVM branch
+  if jq -e '.blockdevices[] | select(.fstype=="LVM2_member")' <<<"$lsblk_json" >/dev/null; then
+    verbose_log "LVM PVs detected—scanning for LV"
+    pvscan --cache >/dev/null
+    vgscan --mknodes >/dev/null
+    ROOT_PART=$(lvscan --verbose | awk '/^  ACTIVE/ { gsub(/"/,"",$2); print $2; exit }')
+    [[ -n "$ROOT_PART" ]] || { log "No active LVM LV found"; exit 1; }
+
+  # 2) ZFS branch
+  elif jq -e '.blockdevices[] | select(.fstype=="zfs_member")' <<<"$lsblk_json" >/dev/null; then
+    verbose_log "ZFS detected—selecting zvol"
+    local zvol
+    zvol=$(zfs list -H -o name -t volume | head -n1)
+    [[ -n "$zvol" ]] || { log "No ZFS volume found"; exit 1; }
+    ROOT_PART="/dev/zvol/${zvol}"
+
+  # 3) Btrfs branch
+  else
+    local bdev
+    bdev=$(jq -r '.blockdevices[] | select(.type=="part" and .fstype=="btrfs") | "/dev/"+.name' <<<"$lsblk_json" | head -n1)
+    if [[ -n "$bdev" ]]; then
+      verbose_log "Btrfs detected on ${bdev}—inspecting subvolumes"
+      TMP_MNT=$(mktemp -d /dev/shm/chrooty.XXXX)
+      mount "${bdev}" "${TMP_MNT}"
+      mapfile -t subvols < <(btrfs subvolume list -o "${TMP_MNT}" | awk '{print $9}')
+      umount "${TMP_MNT}" && rmdir "${TMP_MNT}"
+      if printf '%s\n' "${subvols[@]}" | grep -qx "@"; then
+        BTRFS_SUBVOL="@"
+      else
+        BTRFS_SUBVOL="5"
+      fi
+      ROOT_PART="${bdev}"
+      verbose_log "Selected BTRFS_SUBVOL=${BTRFS_SUBVOL}"
+    else
+      verbose_log "Falling back to native FS (ext4, xfs, exfat)"
+      ROOT_PART=$(jq -r '.blockdevices[] | select(.type=="part" and (.fstype=="ext4" or .fstype=="xfs" or .fstype=="exfat")) | "/dev/"+.name' <<<"$lsblk_json" | head -n1)
+      [[ -n "$ROOT_PART" ]] || { log "No suitable native FS found"; exit 1; }
+    fi
+  fi
+
+  # 4) EFI detection
+  EFI_PART=$(jq -r '.blockdevices[] | select(.type=="part" and (.fstype=="vfat" or .fstype=="fat32") and (.partlabel|test("EFI";"i"))) | "/dev/"+.name' <<<"$lsblk_json" | head -n1)
+
+  verbose_log "Using ROOT_PART=${ROOT_PART}"
+  if [[ -n "$EFI_PART" ]]; then
+    verbose_log "Detected EFI_PART=${EFI_PART}"
+  elif (( UEFI_ONLY )); then
+    log "EFI-only mode but no EFI partition found"; exit 1
+  fi
+
+  blkid "${ROOT_PART}" &>/dev/null || { log "blkid failed on ${ROOT_PART}"; exit 1; }
+  [[ -z "${EFI_PART}" ]] || blkid "${EFI_PART}" &>/dev/null || { log "blkid failed on ${EFI_PART}"; exit 1; }
+}
+
+##########################
+# Mount / Unmount Chroot #
+##########################
+mount_chroot() {
+  verbose_log "Mounting chroot at ${CHROOT_DIR}"
+  mkdir -p "${CHROOT_DIR}"
+  run_pre_chroot_hooks
+
+  if [[ -n "${BTRFS_SUBVOL}" ]]; then
+    mount -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
+  else
+    mount "${ROOT_PART}" "${CHROOT_DIR}"
+  fi
+
+  for fs in proc sys dev; do
+    mount --bind "/${fs}" "${CHROOT_DIR}/${fs}"
+  done
+
+  if [[ -n "${EFI_PART}" ]]; then
+    mkdir -p "${CHROOT_DIR}/boot/efi"
+    mount "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
+  fi
+
+  log "Mount complete"
+}
+
+unmount_chroot() {
+  cleanup
+  run_post_chroot_hooks
+  log "Unmount complete"
+}
+
+###################
+# Enter the Chroot#
+###################
+enter_chroot() {
+  log "Entering chroot"
+  exec chroot "${CHROOT_DIR}" /bin/bash
+}
+
+########
+# Main #
+########
+main() {
+  init_log
+  ensure_hook_dirs
+  parse_args "$@"
+
+  if (( NONINTERACTIVE==0 )); then
+    PS3="Select action: "
+    options=("Rescue System" "Rescue UEFI" "Full Rescue" "Quit")
+    select opt in "${options[@]}"; do
+      case $opt in
+        "Rescue System") SYSTEM_ONLY=1; break ;;
+        "Rescue UEFI")   UEFI_ONLY=1;   break ;;
+        "Full Rescue")   break ;;
+        "Quit")          exit 0       ;;
+        *) echo "Invalid selection";;
+      esac
+    done
+  fi
+
+  detect_partitions
+  mount_chroot
+  enter_chroot
+  unmount_chroot
+}
+
+main "$@"

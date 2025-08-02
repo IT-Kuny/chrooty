@@ -1,0 +1,15 @@
+Source: chrooty
+Section: utils
+Priority: optional
+Maintainer: 0n1cOn3 <it@it-kuny.ch>
+Build-Depends: debhelper-compat (= 13), jq, btrfs-progs, lvm2, zfsutils-linux, dosfstools, parted, util-linux
+Standards-Version: 4.5.1
+Homepage: https://github.com/IT-Kuny/chrooty
+
+Package: chrooty
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Rescue and chroot utility with comprehensive volume detection
+ chrooty automates chroot-based rescue operations—including LVM, ZFS, Btrfs
+ subvolume handling, EFI mounts, and extensive logging—and supports both
+ interactive and automated workflows.
