@@ -4,7 +4,7 @@
 #   EFI support, interactive & non-interactive modes, verbose logging,
 #   self-provisioned log rotation, and extensible plugin architecture.
 
-set -euo pipefail
+set -eEuo pipefail
 IFS=$'\n\t'
 
 APP="chrooty"
@@ -114,7 +114,11 @@ cleanup() {
   log "Cleanup complete"
 }
 
-trap 'cleanup; log "Exiting due to error"; exit 1' ERR INT TERM
+trap 'cleanup; log "Error on line $LINENO"; exit 1' ERR INT TERM
+# 1) On any error, log it (but don’t clean up here)
+trap 'log "Error on line $LINENO. Exiting."' ERR TERM
+# 2) Always run cleanup() on exit (success or failure)
+trap 'cleanup' EXIT INT TERM
 
 ###################
 # Argument parser #
