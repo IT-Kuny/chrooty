@@ -441,56 +441,49 @@ unmount_chroot() {
 ###################
 # Enter the Chroot#
 ###################
-enter_chroot() {
-  log "Locating shell inside chroot"
-  local candidates=( /bin/bash /usr/bin/bash /bin/sh /usr/bin/sh )
-  local shell_path=""
+ enter_chroot() {
+   log "Locating shell inside chroot"
+   local candidates=( /bin/bash /usr/bin/bash /usr/bin/zsh /bin/zsh /bin/sh /usr/bin/sh )
+   local shell_path=""
 
-  # 1) Try target-native shells
-  for sh in "${candidates[@]}"; do
-    if [[ -x "${CHROOT_DIR}${sh}" ]]; then
-      shell_path="$sh"
-      break
-    fi
-  done
+   # 1) Try target-native shells
+   for sh in "${candidates[@]}"; do
+     if [[ -x "${CHROOT_DIR}${sh}" ]]; then
+       shell_path="$sh"
+       break
+     fi
+   done
 
-  # 1.1) If still empty, default to /bin/sh
+  # 2) If no native shell, bind host binaries & libraries, then reset shell_path
   if [[ -z "$shell_path" ]]; then
+    log "No native shell in chroot; binding host binaries and libraries"
+    # Binaries
+    for d in bin usr/bin; do
+      mkdir -p "${CHROOT_DIR}/${d}"
+      mount --bind "/${d}" "${CHROOT_DIR}/${d}"
+    done
+    # Libraries
+    for ld in lib lib64 usr/lib usr/lib64; do
+      [[ -d "/${ld}" ]] || continue
+      mkdir -p "${CHROOT_DIR}/${ld}"
+      mount --bind "/${ld}" "${CHROOT_DIR}/${ld}"
+    done
+    # Sudo helpers
+    if [[ -d /usr/libexec/sudo ]]; then
+      mkdir -p "${CHROOT_DIR}/usr/libexec/sudo"
+      mount --bind /usr/libexec/sudo "${CHROOT_DIR}/usr/libexec/sudo"
+    fi
+
+    # After binding, we know /bin/sh exists
     shell_path="/bin/sh"
-    log "No native shell detected; defaulting to $shell_path"
+    log "Fallback shell set to ${shell_path}"
   fi
 
-  # 2) Fallback: bind host bins & libs if no shell
-if [[ -z "$shell_path" ]]; then
-  log "No shell in chroot; binding host binaries and libraries"
-  # Binaries
-  for d in bin usr/bin; do
-    mkdir -p "${CHROOT_DIR}/${d}"
-    mount --bind "/${d}" "${CHROOT_DIR}/${d}"
-  done
-fi
-  # Libraries
-for ld in lib lib64 usr/lib usr/lib64; do
-    [[ -d "/${ld}" ]] || continue
-    mkdir -p "${CHROOT_DIR}/${ld}"
-    mount --bind "/${ld}" "${CHROOT_DIR}/${ld}"
-  done
-
-  # **sudo’s helper modules**
-  if [[ -d /usr/libexec/sudo ]]; then
-    mkdir -p "${CHROOT_DIR}/usr/libexec/sudo"
-    mount --bind "/usr/libexec/sudo" "${CHROOT_DIR}/usr/libexec/sudo"
-fi
-
-  # Only bind-mount host /etc/resolv.conf if the OS image already has /etc
-  if [[ -d "${CHROOT_DIR}/etc" && -e /etc/resolv.conf ]]; then
-    mount --bind /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
-  fi
-
-  # 4) Enter the chroot
+  # 3) Enter the chroot
   log "Entering chroot with shell ${shell_path}"
   chroot "${CHROOT_DIR}" "${shell_path}"
 }
+
 
 ########
 # Main #
