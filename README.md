@@ -17,23 +17,23 @@
 
 ## Installation
 
-### Debian/Ubuntu
+### Debian/Ubuntu (Planned...)
 
 ```bash
 sudo apt-get update
 sudo apt-get install -y chrooty
 ```
 
-### Fedora/CentOS/RHEL
+### Fedora/CentOS/RHEL (Planned...)
 
 ```bash
 sudo dnf install -y chrooty
 ```
 
-### Homebrew (macOS/Linux)
+### Homebrew (macOS/Linux) (Planned...)
 
 ```bash
-brew tap yourusername/homebrew-chrooty
+brew tap github.com/0n1cOn3/chrooty
 brew install chrooty
 ```
 
