@@ -1,7 +1,7 @@
 class Chrooty < Formula
   desc "Rescue and chroot utility with comprehensive volume detection"
   homepage "https://github.com/IT-Kuny/chrooty"
-  url "https://github.com/IT-Kuny/chrooty/archive/0.1.tar.gz"
+  url "https://github.com/IT-Kuny/chrooty/archive/refs/heads/main.zip"
   version "0.1"
   sha256 "PLACEHOLDER_SHA256"
 
@@ -11,7 +11,8 @@ class Chrooty < Formula
   depends_on "zfs"
   depends_on "dosfstools"
   depends_on "parted"
-
+  depends_on "unzip"
+  
   def install
     bin.install "chrooty"
     etc.install "hooks/pre_chroot.d"

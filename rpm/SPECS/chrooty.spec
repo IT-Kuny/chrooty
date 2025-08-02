@@ -27,5 +27,5 @@ install -m0755 chrooty %{buildroot}%{_bindir}/chrooty
 %doc README.md CONTRIBUTING.md CODE_OF_CONDUCT.md
 
 %changelog
-* Fri Aug 02 2025 0n1cOn3 <it@it-kuny> - 0.1-1
-- Initial RPM release
+* Fri Aug 02 2025 0n1cOn3 <it@it-kuny> - 0.2.1
+- Initial Alpha Release with refactored code.
