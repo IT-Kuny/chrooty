@@ -317,16 +317,22 @@ fi
 
   # Bind /proc, /sys, /dev
   for fs in proc sys dev; do
+    mkdir -p "${CHROOT_DIR}/${fs}"
     mount --bind "/${fs}" "${CHROOT_DIR}/${fs}"
   done
 
   # EFI mount (vfat)
   if [[ -n "${EFI_PART}" ]]; then
     mkdir -p "${CHROOT_DIR}/boot/efi"
+    # EFI is always vfat
     mount -t vfat "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
   fi
 
   log "Mount complete"
+}
+
+
+
 }
 
 
