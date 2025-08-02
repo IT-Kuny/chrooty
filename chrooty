@@ -102,7 +102,7 @@ cleanup() {
   fi
 
   # 2) Unmount auxiliary binds (bin, usr/bin, lib, lib64, etc.)
-  for dir in bin usr/bin lib lib64 usr/lib usr/lib64 run; do
+  for dir in run bin usr/bin lib lib64 usr/lib usr/lib64; do
     _umount "${CHROOT_DIR}/${dir}"
     rmdir "${CHROOT_DIR}/${dir}" 2>/dev/null || true
   done
@@ -454,6 +454,12 @@ enter_chroot() {
     fi
   done
 
+  # 1.1) If still empty, default to /bin/sh
+  if [[ -z "$shell_path" ]]; then
+    shell_path="/bin/sh"
+    log "No native shell detected; defaulting to $shell_path"
+  fi
+
   # 2) Fallback: bind host bins & libs if no shell
 if [[ -z "$shell_path" ]]; then
   log "No shell in chroot; binding host binaries and libraries"
@@ -483,7 +489,7 @@ fi
 
   # 4) Enter the chroot
   log "Entering chroot with shell ${shell_path}"
-  chroot "${CHROOT_DIR}" "${shell_path}"
+  chroot "${CHROOT_DIR}" "${shell_path}"for dir in bin usr/bin lib lib64 usr/lib usr/lib64 run; do
 }
 
 ########
