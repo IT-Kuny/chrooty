@@ -158,95 +158,130 @@ run_post_chroot_hooks() {
 #################################
 detect_partitions() {
   verbose_log "Detecting partitions and volumes"
-  local lsblk_json
-  lsblk_json=$(lsblk --json -o NAME,TYPE,PTTYPE,PARTLABEL,FSTYPE) || {
-    log "Failed to run lsblk"; exit 1
+
+  # 1) Retrieve raw JSON from lsblk
+  local raw_lsblk
+  raw_lsblk=$(lsblk --json -o NAME,TYPE,PTTYPE,PARTLABEL,FSTYPE) || {
+    log "Failed to run lsblk"
+    exit 1
   }
 
-  # Verbose disk report
+  # 2) Flatten blockdevices + nested children into one array
+  #    We drop the original top-level wrapper to get .[] items directly.
+  local lsblk_json
+  lsblk_json=$(
+    jq -c '
+      [ .blockdevices[] 
+        | { name, type, pttype, partlabel, fstype } ] +
+      [ .blockdevices[] 
+        | .children[]? 
+        | { name, type, pttype, partlabel, fstype } ]
+    ' <<<"$raw_lsblk"
+  ) || { log "Failed to flatten lsblk JSON"; exit 1; }
+
+  # 3) (Verbose) Report top-level disks and their partition tables
   if (( VERBOSE )); then
     verbose_log "Disks and partition tables:"
-    jq -r '.blockdevices[] | select(.type=="disk") | "  /dev/\(.name): table=\(.pttype // \"unknown\")"'       <<<"$lsblk_json" | while read -r line; do log "$line"; echo "$line"; done
+    jq -r '
+      .blockdevices[] 
+      | select(.type=="disk") 
+      | "  /dev/\(.name): table=\(.pttype // \"unknown\")"
+    ' <<<"$raw_lsblk" | while read -r line; do
+      log "$line"
+      echo "$line"
+    done
   fi
 
-  # 1) LVM branch
-  if jq -e '.blockdevices[] | select(.fstype=="LVM2_member")' <<<"$lsblk_json" >/dev/null; then
+  # 4) LVM detection
+  if jq -e '.[] | select(.fstype=="LVM2_member")' <<<"$lsblk_json" &>/dev/null; then
     verbose_log "LVM PVs detected—scanning for LV"
-    pvscan --cache >/dev/null
-    vgscan --mknodes >/dev/null
-    ROOT_PART=$(lvscan --verbose | awk '/^  ACTIVE/ { gsub(/"/,"",$2); print $2; exit }')
+    pvscan --cache &>/dev/null
+    vgscan --mknodes &>/dev/null
+    ROOT_PART=$(
+      lvscan --verbose \
+        | awk '/^  ACTIVE/ { gsub(/"/,"",$2); print $2; exit }'
+    )
     [[ -n "$ROOT_PART" ]] || { log "No active LVM LV found"; exit 1; }
 
-  # 2) ZFS branch
-  elif jq -e '.blockdevices[] | select(.fstype=="zfs_member")' <<<"$lsblk_json" >/dev/null; then
-    verbose_log "ZFS detected—selecting zvol"
+  # 5) ZFS detection
+  elif jq -e '.[] | select(.fstype=="zfs_member")' <<<"$lsblk_json" &>/dev/null; then
+    verbose_log "ZFS detected—selecting first zvol"
     local zvol
     zvol=$(zfs list -H -o name -t volume | head -n1)
     [[ -n "$zvol" ]] || { log "No ZFS volume found"; exit 1; }
     ROOT_PART="/dev/zvol/${zvol}"
 
-  # 3) Btrfs branch
+  # 6) Btrfs detection
   else
     local bdev
-    bdev=$(jq -r '.blockdevices[] | select(.type=="part" and .fstype=="btrfs") | "/dev/"+.name' <<<"$lsblk_json" | head -n1)
+    bdev=$(
+      jq -r '
+        .[] 
+        | select(.type=="part" and .fstype=="btrfs") 
+        | "/dev/"+.name
+      ' <<<"$lsblk_json" | head -n1
+    )
     if [[ -n "$bdev" ]]; then
-      verbose_log "Btrfs detected on ${bdev}—inspecting subvolumes"
+      verbose_log "Btrfs detected on $bdev—inspecting subvolumes"
       TMP_MNT=$(mktemp -d /dev/shm/chrooty.XXXX)
-      mount "${bdev}" "${TMP_MNT}"
-      mapfile -t subvols < <(btrfs subvolume list -o "${TMP_MNT}" | awk '{print $9}')
-      umount "${TMP_MNT}" && rmdir "${TMP_MNT}"
+      mount "$bdev" "$TMP_MNT"
+      mapfile -t subvols < <(
+        btrfs subvolume list -o "$TMP_MNT" | awk '{print $9}'
+      )
+      umount "$TMP_MNT" && rmdir "$TMP_MNT"
       if printf '%s\n' "${subvols[@]}" | grep -qx "@"; then
         BTRFS_SUBVOL="@"
       else
         BTRFS_SUBVOL="5"
       fi
-      ROOT_PART="${bdev}"
-      verbose_log "Selected BTRFS_SUBVOL=${BTRFS_SUBVOL}"
+      ROOT_PART="$bdev"
+      verbose_log "Selected BTRFS_SUBVOL=$BTRFS_SUBVOL"
     else
+      # 7) Native filesystem fallback
       verbose_log "Falling back to native FS (ext4, xfs, exfat)"
-      ROOT_PART=$(jq -r '.blockdevices[] | select(.type=="part" and (.fstype=="ext4" or .fstype=="xfs" or .fstype=="exfat")) | "/dev/"+.name' <<<"$lsblk_json" | head -n1)
-      [[ -n "$ROOT_PART" ]] || { log "No suitable native FS found"; exit 1; }
+      ROOT_PART=$(
+        jq -r '
+          .[] 
+          | select(
+              .type=="part" and
+              (.fstype=="ext4" or .fstype=="xfs" or .fstype=="exfat")
+            )
+          | "/dev/"+.name
+        ' <<<"$lsblk_json" | head -n1
+      )
+      [[ -n "$ROOT_PART" ]] || { log "No suitable native filesystem found"; exit 1; }
     fi
   fi
 
-  # 4) EFI detection
-  EFI_PART=$(jq -r '.blockdevices[] | select(.type=="part" and (.fstype=="vfat" or .fstype=="fat32") and (.partlabel|test("EFI";"i"))) | "/dev/"+.name' <<<"$lsblk_json" | head -n1)
+  # 8) EFI partition detection (always from flattened list)
+  EFI_PART=$(
+    jq -r '
+      .[] 
+      | select(
+          .type=="part" and
+          (.fstype=="vfat" or .fstype=="fat32") and
+          (.partlabel | test("EFI"; "i"))
+        )
+      | "/dev/"+.name
+    ' <<<"$lsblk_json" | head -n1
+  )
 
-  verbose_log "Using ROOT_PART=${ROOT_PART}"
+  verbose_log "Using ROOT_PART=$ROOT_PART"
   if [[ -n "$EFI_PART" ]]; then
-    verbose_log "Detected EFI_PART=${EFI_PART}"
+    verbose_log "Detected EFI_PART=$EFI_PART"
   elif (( UEFI_ONLY )); then
-    log "EFI-only mode but no EFI partition found"; exit 1
+    log "EFI-only mode but no EFI partition found"
+    exit 1
   fi
 
-  blkid "${ROOT_PART}" &>/dev/null || { log "blkid failed on ${ROOT_PART}"; exit 1; }
-  [[ -z "${EFI_PART}" ]] || blkid "${EFI_PART}" &>/dev/null || { log "blkid failed on ${EFI_PART}"; exit 1; }
-}
+  # 9) Final sanity check via blkid
+  blkid "$ROOT_PART" &>/dev/null \
+    || { log "blkid probe failed on $ROOT_PART"; exit 1; }
+  [[ -z "$EFI_PART" ]] \
+    || blkid "$EFI_PART" &>/dev/null \
+       || { log "blkid probe failed on $EFI_PART"; exit 1; }
 
-##########################
-# Mount / Unmount Chroot #
-##########################
-mount_chroot() {
-  verbose_log "Mounting chroot at ${CHROOT_DIR}"
-  mkdir -p "${CHROOT_DIR}"
-  run_pre_chroot_hooks
-
-  if [[ -n "${BTRFS_SUBVOL}" ]]; then
-    mount -o subvol="${BTRFS_SUBVOL}" "${ROOT_PART}" "${CHROOT_DIR}"
-  else
-    mount "${ROOT_PART}" "${CHROOT_DIR}"
-  fi
-
-  for fs in proc sys dev; do
-    mount --bind "/${fs}" "${CHROOT_DIR}/${fs}"
-  done
-
-  if [[ -n "${EFI_PART}" ]]; then
-    mkdir -p "${CHROOT_DIR}/boot/efi"
-    mount "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
-  fi
-
-  log "Mount complete"
+  export ROOT_PART EFI_PART BTRFS_SUBVOL
 }
 
 unmount_chroot() {
