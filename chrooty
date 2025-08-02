@@ -331,11 +331,6 @@ fi
   log "Mount complete"
 }
 
-
-
-}
-
-
 unmount_chroot() {
   cleanup             # core unmount logic
   run_post_chroot_hooks
