@@ -108,7 +108,7 @@ cleanup() {
   done
 
   # 3) Finally unmount and remove the root mount
-  _umount -l "$CHROOT_DIR"
+  _umount "$CHROOT_DIR"
   rmdir "$CHROOT_DIR" 2>/dev/null || true
 
   log "Cleanup complete"
