@@ -385,7 +385,7 @@ choose_partitions() {
   log "User selected ROOT_PART=${ROOT_PART}, EFI_PART=${EFI_PART:-<none>}"
 }
 
-mount_chroot() {
+mmount_chroot() {
   verbose_log "Mounting root filesystem at ${CHROOT_DIR}"
   mkdir -p "${CHROOT_DIR}"
   run_pre_chroot_hooks
@@ -424,21 +424,30 @@ mount_chroot() {
 
     # 4) Bind-mount DNS
     mkdir -p "${CHROOT_DIR}/etc"
-    # Ensure the target file exists
     : > "${CHROOT_DIR}/etc/resolv.conf"
     if [[ -e /etc/resolv.conf ]]; then
       mount --bind /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
     fi
 
-    # 5) Populate /etc/mtab only if target isn’t already the same file
+    # 5) Populate /etc/mtab
     if ! cmp -s /proc/mounts "${CHROOT_DIR}/etc/mtab"; then
       cp /proc/mounts "${CHROOT_DIR}/etc/mtab"
     fi
 
-    # 6) Mount EFI if present
+    # 6) Mount EFI and EFI variables if present
     if [[ -n "${EFI_PART}" ]]; then
       mkdir -p "${CHROOT_DIR}/boot/efi"
       mount -t vfat "${EFI_PART}" "${CHROOT_DIR}/boot/efi"
+
+      # Ensure efivarfs is mounted on the host
+      if ! mountpoint -q /sys/firmware/efi/efivars; then
+        modprobe efivarfs
+        mount -t efivarfs efivarfs /sys/firmware/efi/efivars
+      fi
+
+      # Bind-mount efivars into the chroot
+      mkdir -p "${CHROOT_DIR}/sys/firmware/efi/efivars"
+      mount --bind /sys/firmware/efi/efivars "${CHROOT_DIR}/sys/firmware/efi/efivars"
     fi
 
     log "All binds complete"
@@ -447,6 +456,7 @@ mount_chroot() {
     log "Warning: root partition ${ROOT_PART} has no content; install or populate it first"
   fi
 }
+
 
 unmount_chroot() {
   cleanup             # core unmount logic
