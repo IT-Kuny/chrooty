@@ -96,14 +96,14 @@ cleanup() {
     # Iterate and unmount
     for entry in "${mounts[@]}"; do
       target="${entry#* }"
-      _umount -l "$target"
+      _umount "$target"
       rmdir "$target" 2>/dev/null || true
     done
   fi
 
   # 2) Unmount auxiliary binds (bin, usr/bin, lib, lib64, etc.)
   for dir in bin usr/bin lib lib64 usr/lib usr/lib64 run; do
-    _umount -l "${CHROOT_DIR}/${dir}"
+    _umount "${CHROOT_DIR}/${dir}"
     rmdir "${CHROOT_DIR}/${dir}" 2>/dev/null || true
   done
 
