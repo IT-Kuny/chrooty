@@ -451,27 +451,29 @@ if [[ -z "$shell_path" ]]; then
     mkdir -p "${CHROOT_DIR}/${d}"
     mount --bind "/${d}" "${CHROOT_DIR}/${d}"
   done
+fi
   # Libraries
-  for ld in lib lib64 usr/lib usr/lib64; do
+for ld in lib lib64 usr/lib usr/lib64; do
     [[ -d "/${ld}" ]] || continue
     mkdir -p "${CHROOT_DIR}/${ld}"
     mount --bind "/${ld}" "${CHROOT_DIR}/${ld}"
   done
+
   # **sudo’s helper modules**
   if [[ -d /usr/libexec/sudo ]]; then
     mkdir -p "${CHROOT_DIR}/usr/libexec/sudo"
     mount --bind "/usr/libexec/sudo" "${CHROOT_DIR}/usr/libexec/sudo"
-  fi
+fi
 
   # 3) Ensure DNS resolution
-  if [[ -L /etc/resolv.conf ]]; then
+if [[ -L /etc/resolv.conf ]]; then
     # Preserve symlink type
     local target; target=$(readlink /etc/resolv.conf)
     cp -L "/etc/${target}" "${CHROOT_DIR}/etc/$(basename "$target")"
     ln -sr "$(basename "$target")" "${CHROOT_DIR}/etc/resolv.conf"
   else
     cp -L /etc/resolv.conf "${CHROOT_DIR}/etc/resolv.conf"
-  fi
+fi
 
   # 4) Enter the chroot
   log "Entering chroot with shell ${shell_path}"
