@@ -310,6 +310,65 @@ detect_partitions() {
   export ROOT_PART EFI_PART BTRFS_SUBVOL
 }
 
+choose_partitions() {
+  echo
+  echo "Detected partitions:"
+  lsblk -plno NAME,FSTYPE,SIZE,PARTLABEL | column -t
+
+  # Build arrays of candidates
+  mapfile -t os_parts < <(
+    lsblk -plno NAME,FSTYPE |
+      awk '$2 ~ /^(ext4|xfs|exfat|btrfs|LVM2_member|zfs_member)$/ { print $1 " (" $2 ")" }'
+  )
+  mapfile -t efi_parts < <(
+    lsblk -plno NAME,FSTYPE,PARTLABEL |
+      awk '$2 ~ /^(vfat|fat32)$/ && tolower($3) ~ /efi/ { print $1 " (" $2 ")" }'
+  )
+
+  # Choose ROOT_PART
+  if (( ${#os_parts[@]} == 1 )); then
+    echo
+    echo "Single OS partition detected: ${os_parts[0]}"
+    read -rn1 -p "Press any key to confirm... " 
+    echo
+    ROOT_PART="${os_parts[0]%% *}"
+  else
+    echo
+    echo "Select the partition to use for the OS/root:"
+    select entry in "${os_parts[@]}"; do
+      if [[ -n "$entry" ]]; then
+        ROOT_PART="${entry%% *}"
+        break
+      fi
+    done
+  fi
+
+  # Choose EFI_PART (if any)
+  if (( ${#efi_parts[@]} == 0 )); then
+    echo
+    echo "No EFI partition detected; continuing in BIOS mode."
+    EFI_PART=""
+  elif (( ${#efi_parts[@]} == 1 )); then
+    echo
+    echo "Single EFI partition detected: ${efi_parts[0]}"
+    read -rn1 -p "Press any key to confirm... "
+    echo
+    EFI_PART="${efi_parts[0]%% *}"
+  else
+    echo
+    echo "Select the partition to use for EFI:"
+    select entry in "${efi_parts[@]}"; do
+      if [[ -n "$entry" ]]; then
+        EFI_PART="${entry%% *}"
+        break
+      fi
+    done
+  fi
+
+  verbose_log "User selected ROOT_PART=${ROOT_PART}, EFI_PART=${EFI_PART:-<none>}"
+  log "User selected ROOT_PART=${ROOT_PART}, EFI_PART=${EFI_PART:-<none>}"
+}
+
 mount_chroot() {
   verbose_log "Mounting chroot at ${CHROOT_DIR}"
   mkdir -p "${CHROOT_DIR}"
@@ -441,6 +500,7 @@ main() {
   fi
 
   detect_partitions
+  choose_partitions
   mount_chroot
   enter_chroot
   unmount_chroot
